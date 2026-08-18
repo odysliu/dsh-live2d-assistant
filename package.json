@@ -1,0 +1,18 @@
+{
+  "name": "dsh-live2d-assistant",
+  "version": "1.0.0",
+  "description": "BD2 Live2D assistant for the DeepSeek Harness Web GUI — a daily-rotating anime character rendered in the corner, with hover menus, action switching, and double-click zoom.",
+  "type": "module",
+  "main": "lib/index.js",
+  "files": [
+    "lib",
+    "assets",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,7 @@
+# dsh-live2d-assistant bundle patch: mounts the live2d host plugin.
+# The plugin owns the Web surface: it serves its static client script and
+# the spine runtime, registers the Service Worker cache, and injects the
+# script tag into the index.html response via the webserver index tap.
+- insert:
+    - id: live2d-assistant
+      name: 'dsh-live2d-assistant'
