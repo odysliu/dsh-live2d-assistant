@@ -193,7 +193,7 @@
   var ASSET_BASE = 'https://jelosus2.github.io/BD2-L2D-Viewer/assets/spines/';
   var PANEL_W = 'clamp(240px, 24vw, 340px)';
 
-  var state = { container: null, player: null, char: null, obs: null, loaded: false, cam: null, bounds: null, anims: null, animIdx: 0, zoomed: false, clickTimer: null };
+  var state = { container: null, player: null, char: null, obs: null, loaded: false, cam: null, bounds: null, anims: null, animIdx: 0, zoomed: false, clickTimer: null, suppressClick: false, drag: null };
 
   function todayKey() {
     var d = new Date();
@@ -377,10 +377,14 @@
     var c = state.container;
     if (!c) return;
     if (!state.zoomed) {
-      var top = 14;
+      // 放大保持在当前位置：读取面板当前 top；空间不足（拖到了下方）时自动上移
+      var rect = c.getBoundingClientRect();
+      var top = Math.max(14, Math.round(rect.top));
       var limit = getComposerTop();
       var ba = charAspect();
-      var h = Math.max(220, limit - top - 10);
+      var maxH = limit - top - 10;
+      if (maxH < 220) { top = Math.max(14, Math.round(limit - 220 - 10)); maxH = limit - top - 10; }
+      var h = Math.max(220, maxH);
       var w = Math.round(h / ba);                       // 面板宽高比 = 角色比例
       w = Math.min(Math.max(280, w), 640);              // 宽度下限 280 / 上限 640
       if (w === 640 && h / ba > 640) h = Math.round(640 * ba);  // 宽度触顶时降低高度保持比例
@@ -391,7 +395,7 @@
     } else {
       c.style.width = '';
       c.style.height = '';
-      c.style.top = '';
+      // 恢复时不重置位置：保留拖拽/放大时设定的 left/top
       state.zoomed = false;
     }
     if (state.loaded && state.player) {
@@ -564,10 +568,11 @@
           setTimeout(function () { try { p.play && p.play(); } catch (e) {} }, 200);
           // 等动画应用后再一次性设置相机，避免被动画自带 viewport 覆盖
           setTimeout(function () { applyViewport(p); }, 60);
-          // 单击切换动作（延迟 260ms 区分双击）；双击放大/恢复
+          // 单击切换动作（延迟 260ms 区分双击）；双击放大/恢复；拖拽移动面板
           state.container.style.cursor = 'pointer';
           state.container.onclick = function (ev) {
             if (ev.target.closest && ev.target.closest('.bd2-menu')) return;  // 菜单内点击不切换
+            if (state.suppressClick) return;  // 刚拖拽结束 → 忽略这次 click
             if (state.clickTimer) { clearTimeout(state.clickTimer); state.clickTimer = null; return; }  // 双击的第二次点击 → 交给 dblclick
             state.clickTimer = setTimeout(function () {
               state.clickTimer = null;
@@ -587,6 +592,24 @@
             if (ev.target.closest && ev.target.closest('.bd2-menu')) return;
             if (state.clickTimer) { clearTimeout(state.clickTimer); state.clickTimer = null; }
             toggleZoom();
+          };
+          // 拖拽移动：mousedown 记录起点，window 上跟踪 move/up
+          state.container.onmousedown = function (ev) {
+            if (ev.target.closest && ev.target.closest('.bd2-menu')) return;
+            if (ev.button !== 0) return;
+            var rect = state.container.getBoundingClientRect();
+            state.drag = {
+              startX: ev.clientX,
+              startY: ev.clientY,
+              origLeft: rect.left,
+              origTop: rect.top,
+              moved: false
+            };
+            // 拖拽时收起悬停菜单
+            var m = state.container.querySelector('.bd2-menu');
+            if (m) m.remove();
+            state.container.style.cursor = 'grabbing';
+            ev.preventDefault();
           };
           // 悬停显示动作/角色菜单
           state.container.onmouseenter = showMenus;
@@ -627,7 +650,7 @@
   function ensureMounted() {
     if (state.container && document.getElementById('bd2-live')) return;
     if (state.obs) { try { state.obs.disconnect(); } catch (e) {} }
-    state = { container: null, player: null, char: null, obs: null, loaded: false, cam: null, bounds: null, anims: null, animIdx: 0, zoomed: false, clickTimer: null };
+    state = { container: null, player: null, char: null, obs: null, loaded: false, cam: null, bounds: null, anims: null, animIdx: 0, zoomed: false, clickTimer: null, suppressClick: false, drag: null };
     mount();
   }
 
@@ -656,18 +679,43 @@
         console.warn('[bd2] SW 注册失败', e);
       });
     }
-    // 窗口变化时若处于放大状态，重新收敛到输入框上边缘以内（面板比例跟随角色）
+    // 窗口变化时若处于放大状态，重新收敛到输入框上边缘以内（面板比例跟随角色，保持当前位置）
     window.addEventListener('resize', function () {
       if (state.zoomed && state.container) {
+        var rect = state.container.getBoundingClientRect();
+        var top = rect.top;
         var limit = getComposerTop();
         var ba = charAspect();
-        var h = Math.max(220, limit - 14 - 10);
+        var h = Math.max(220, limit - top - 10);
         var w = Math.round(h / ba);
         w = Math.min(Math.max(280, w), 640);
         if (w === 640 && h / ba > 640) h = Math.round(640 * ba);
         state.container.style.height = h + 'px';
         state.container.style.width = w + 'px';
         if (state.loaded && state.player) setTimeout(function () { applyViewport(state.player); }, 60);
+      }
+    });
+    // 拖拽跟踪（window 级）：跟随 mousedown 起点移动面板
+    window.addEventListener('mousemove', function (e) {
+      var d = state.drag;
+      if (!d) return;
+      var dx = e.clientX - d.startX;
+      var dy = e.clientY - d.startY;
+      if (!d.moved && dx * dx + dy * dy < 25) return;  // 5px 内不算拖动
+      d.moved = true;
+      var c = state.container;
+      c.style.left = Math.round(d.origLeft + dx) + 'px';
+      c.style.top = Math.round(d.origTop + dy) + 'px';
+    });
+    window.addEventListener('mouseup', function () {
+      var d = state.drag;
+      if (!d) return;
+      state.drag = null;
+      if (state.container) state.container.style.cursor = 'pointer';
+      if (d.moved) {
+        // 拖拽结束：抑制紧接着的 click（避免误切动作）
+        state.suppressClick = true;
+        setTimeout(function () { state.suppressClick = false; }, 350);
       }
     });
     ensureMounted();
