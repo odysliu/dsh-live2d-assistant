@@ -274,44 +274,20 @@
     }).join('');
   }
 
-  // 相机适配（官方机制）：计算可视区写入 config.viewport，再重播动画触发应用。
+  // 相机适配（官方机制）：config.viewport = 角色包围盒原样（contain，完整显示）。
   // SpinePlayer 渲染循环每帧用 currentViewport（由 setViewport 读 config.viewport 生成）驱动相机，
-  // 所以直接改 camera 会被覆盖；改 config.viewport 才是正解。
-  // 立绘场景高度优先：角色高度始终填满面板（上下贴边），宽度按容器比例（窄则左右裁剪，宽则左右留白）。
+  // 并按其 contain 逻辑适配画布——角色永不被裁切，居中显示；
+  // 角色可拖拽移动 + 双击放大（放大时面板比例跟随角色 → 完整且填满），无需为填满而裁切。
   function applyViewport(p) {
     if (!p || !p.skeleton || !p.canvas) return;
     try {
-      // 使用固定 bounds（加载时计算），避免动画帧 pose 变化导致高度飘忽
+      // 使用固定 bounds（加载时计算），避免动画帧 pose 变化导致尺寸飘忽
       var b = state.bounds;
       if (!b || !(b.w > 0) || !(b.h > 0)) return;
-      var canvas = p.canvas;
-      var ca = canvas.height / canvas.width;   // 容器高宽比
-      var vw, vh;
-      if (state.zoomed) {
-        // 放大模式：高度填满 + 宽度完整（面板宽高比已按角色比例设置，可同时满足）
-        vw = Math.max(b.h / ca, b.w);
-        vh = vw * ca;
-      } else {
-        // 默认模式：自动最优——比较「裁宽损失」与「留高损失」，选损失小的方向
-        var cropW = 1 - (b.h / ca) / b.w;   // 高度填满所需的裁宽比例（>0 表示会裁宽）
-        var leaveH = 1 - b.h / (b.w * ca);  // 宽度完整所需的留高比例（>0 表示会留高）
-        if (cropW <= leaveH) {
-          // 裁宽损失更小（或瘦长角色无需裁）：高度填满
-          vh = b.h;
-          vw = b.h / ca;
-        } else {
-          // 留高损失更小：宽度完整，高度留白
-          vw = b.w;
-          vh = b.w * ca;
-        }
-      }
-      var vx = b.x + (b.w - vw) / 2;      // 水平居中
-      var vy = b.y + (b.h - vh) / 2;      // 垂直居中（有留白时上下均匀）
-      var k = 0.97;  // 留 3% 余量防贴边
       p.config.viewport = {
-        x: vx, y: vy,
-        width: Math.max(vw * k, 1),
-        height: Math.max(vh * k, 1),
+        x: b.x, y: b.y,
+        width: b.w,
+        height: b.h,
         padLeft: 0, padRight: 0, padTop: 0, padBottom: 0,
         transitionTime: 0,
         // 必须保留：SpinePlayer.setViewport 内部会访问 viewport.animations[动画名]
